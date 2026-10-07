@@ -185,3 +185,19 @@ jobs:
             - macOS 若提示「包已损坏」，执行 `sudo xattr -rd com.apple.quarantine /Applications/DTV.app`
           releaseDraft: false
           prerelease: false
+
+      # 兜底：tauri-action 建 Release 需要仓库开启 "Read and write" 的
+      # Workflow permissions。若该设置未开启，上面这一步会报
+      # "Resource not accessible by integration" 并让 job 失败，
+      # 但打包产物仍在 runner 上；这里先把产物存成 workflow artifact，
+      # 保证即使发布失败也能把安装包取回来。
+      - name: Upload bundles as workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtv-${{ matrix.arch }}-bundles
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: ignore
