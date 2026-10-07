@@ -20,8 +20,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'ubuntu-22.04'
-            arch: 'x64'
           - platform: 'macos-latest'
             arch: 'aarch64'
           - platform: 'macos-15-intel'
@@ -48,12 +46,6 @@ jobs:
           fi
           echo "tag=${RAW}" >> "$GITHUB_OUTPUT"
           echo "plain=${RAW#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Install dependencies (Ubuntu)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf protobuf-compiler pkg-config perl build-essential
 
       # 不用 Homebrew：Intel macOS 已经没有官方 bottle，brew install 会退化成源码
       # 编译甚至长时间卡住（实测有一次卡在 brew 里 25 分钟没动静）。
@@ -121,7 +113,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 必须 >= 22.13：pnpm 11 依赖 node:sqlite，在 Node 20 上会以
+          # ERR_UNKNOWN_BUILTIN_MODULE 直接崩掉（setup-node 取 pnpm 缓存目录时就会触发）。
+          node-version: '22'
           cache: 'pnpm'
 
       - name: Install Rust

@@ -96,19 +96,25 @@ fn rotl32_by8_in_i64(value: i64) -> i64 {
     high | rotated
 }
 
+/// profile 接口下发的 anti-code 可能带 XML 实体或前导分隔符，统一清洗后再拼进 URL。
+fn sanitize_huya_anti_code(raw: &str) -> String {
+    raw.replace("&amp;", "&")
+        .trim_start_matches(|c| c == '?' || c == '&')
+        .to_string()
+}
+
 // Align with pure_live-master: build anticode using wsTime/fm/etc from upstream token.
 fn build_huya_anti_code(
     stream_name: &str,
     presenter_uid: i64,
     anti_code: &str,
 ) -> Result<String, String> {
-    let sanitized = anti_code.replace("&amp;", "&");
-    let trimmed = sanitized.trim_start_matches(|c| c == '?' || c == '&');
-    let params = parse_query(trimmed);
+    let trimmed = sanitize_huya_anti_code(anti_code);
+    let params = parse_query(&trimmed);
 
     let Some(fm_raw) = params.get("fm").cloned() else {
         // Upstream already returned a usable query string
-        return Ok(trimmed.to_string());
+        return Ok(trimmed);
     };
 
     let ctype = params
@@ -602,6 +608,9 @@ struct WebStreamCandidate {
     stream_name: String,
     presenter_uid: i64,
     cdn: String,
+    /// profile 接口下发的 anti-code。WUP 取 token 失败时用它兜底，
+    /// 实测与 WUP token 一样能取到可播放的流。
+    anti_code: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -733,6 +742,10 @@ fn extract_stream_candidates(profile: &Value) -> Result<Vec<WebStreamCandidate>,
             .get("sStreamName")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
+        let anti_code = item
+            .get("sFlvAntiCode")
+            .and_then(|v| v.as_str())
+            .map(sanitize_huya_anti_code);
         let presenter_uid = {
             let v = parse_i64_lossy(item.get("lChannelId"));
             if v != 0 { v } else { fallback_presenter_uid }
@@ -750,6 +763,7 @@ fn extract_stream_candidates(profile: &Value) -> Result<Vec<WebStreamCandidate>,
                 stream_name: stream_name.to_string(),
                 presenter_uid,
                 cdn,
+                anti_code,
             },
         ));
     }
@@ -986,18 +1000,34 @@ pub async fn get_huya_unified_cmd(
         });
     };
 
+    // 取流凭据有两条路：WUP 的 getCdnTokenInfoEx，以及 profile 接口直接下发的 anti-code。
+    // WUP 需要自己拼 TARS 报文并解析响应，任何一步失败都会让整个房间取不到流；
+    // profile 的 anti-code 实测同样能取到可播放的流，因此作为兜底，避免单点故障。
     // pure_live-master: token = getCdnTokenInfoEx(streamName, flvUrl) -> buildAntiCode(token)
-    let token = huya_get_cdn_token_info_ex(
+    let anti = match huya_get_cdn_token_info_ex(
         client,
         &selected_candidate.flv_url,
         &selected_candidate.stream_name,
     )
-    .await?;
-    let anti = build_huya_anti_code(
-        &selected_candidate.stream_name,
-        selected_candidate.presenter_uid,
-        &token,
-    )?;
+    .await
+    {
+        Ok(token) => build_huya_anti_code(
+            &selected_candidate.stream_name,
+            selected_candidate.presenter_uid,
+            &token,
+        ),
+        Err(e) => Err(e),
+    };
+    let anti = match anti {
+        Ok(anti) => anti,
+        Err(e) => match selected_candidate.anti_code.clone() {
+            Some(fallback) => {
+                eprintln!("[Huya] WUP 取流凭据失败，回退 profile anti-code：{}", e);
+                fallback
+            }
+            None => return Err(e),
+        },
+    };
 
     let base_url = enforce_https(&format!(
         "{}/{}.flv?{}&codec=264",

@@ -21,11 +21,6 @@ pub struct ProxyServerHandle(pub StdMutex<Option<ServerHandle>>);
 const HUYA_HYSDK_UA: &str =
     "HYSDK(Windows,30000002)_APP(pc_exe&7080000&official)_SDK(trans&2.34.0.5795)";
 
-async fn find_free_port() -> u16 {
-    // Using a fixed port as requested by the user for easier debugging
-    34719
-}
-
 #[derive(Deserialize)]
 struct ImageQuery {
     url: String,
@@ -202,7 +197,6 @@ pub async fn start_proxy(
     server_handle_state: State<'_, ProxyServerHandle>,
     stream_url_store: State<'_, StreamUrlStore>,
 ) -> Result<String, String> {
-    let port = find_free_port().await;
     let current_stream_url = stream_url_store.url.lock().unwrap().clone();
 
     if current_stream_url.is_empty() {
@@ -219,7 +213,10 @@ pub async fn start_proxy(
         existing_handle.stop(false).await;
     }
 
-    let server = match HttpServer::new(move || {
+    // 端口交给系统分配。以前写死 34719，一旦被别的进程占用（没退干净的旧实例、
+    // 其他软件等）代理就起不来，调用方再回退成直连地址，播放侧只会报一个
+    // 和真实原因无关的失败。
+    let bound = match HttpServer::new(move || {
         let app_data_stream_url = stream_url_data_for_actix.clone();
         // Create reqwest::Client inside the closure for each worker thread (for images)
         let app_data_reqwest_client = web::Data::new(
@@ -244,19 +241,26 @@ pub async fn start_proxy(
             .route("/image", web::get().to(image_proxy_handler))
     })
     .keep_alive(Duration::from_secs(120))
-    .bind(("127.0.0.1", port))
+    .bind(("127.0.0.1", 0))
     {
         Ok(srv) => srv,
         Err(e) => {
-            let err_msg = format!(
-                "[Rust/proxy.rs] Failed to bind server to port {}: {}",
-                port, e
-            );
+            let err_msg = format!("[Rust/proxy.rs] Failed to bind proxy server: {}", e);
             eprintln!("{}", err_msg);
             return Err(err_msg);
         }
-    }
-    .run();
+    };
+
+    let port = match bound.addrs().first() {
+        Some(addr) => addr.port(),
+        None => {
+            let err_msg = "[Rust/proxy.rs] Proxy server bound without a listen address".to_string();
+            eprintln!("{}", err_msg);
+            return Err(err_msg);
+        }
+    };
+
+    let server = bound.run();
 
     let server_handle_for_state = server.handle();
     *server_handle_state.0.lock().unwrap() = Some(server_handle_for_state);
