@@ -1,3 +1,19 @@
 packages:
   - "web"
 
+# pnpm 10 起构建脚本默认不再自动执行，未列入白名单的依赖会被跳过；
+# pnpm 11 起该设置不再从 package.json 的 "pnpm" 字段读取，改为读取本文件，
+# 且白名单字段更名为 allowBuilds。两者缺失时 `pnpm install` 会以
+# ERR_PNPM_IGNORED_BUILDS 退出（v3.0.4 的 CI 构建即因此失败）。
+allowBuilds:
+  core-js: true
+  es5-ext: true
+  esbuild: true
+  sharp: true
+
+# 兼容仍在使用 pnpm 10 的环境。
+onlyBuiltDependencies:
+  - core-js
+  - esbuild
+  - es5-ext
+  - sharp
