@@ -2,21 +2,17 @@ name: Build and Release
 
 permissions:
   contents: write
-  packages: write
-  actions: read
 
 on:
   push:
     tags:
       - 'v*.*.*'
-      - '*.*'
-      - '*.*.*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build (e.g., v1.0.0 or 1.0)'
-        required: false
-        default: 'manual'
+        description: '版本 tag，需以 v 开头（例如 v3.0.6）'
+        required: true
+        default: 'v3.0.6'
 
 jobs:
   build:
@@ -25,58 +21,87 @@ jobs:
       matrix:
         include:
           - platform: 'ubuntu-22.04'
-            args: ''
-            arch: 'x64'
-
-          - platform: 'macos-15-intel'
-            args: ''
             arch: 'x64'
           - platform: 'macos-latest'
-            args: ''
             arch: 'aarch64'
+          - platform: 'macos-15-intel'
+            arch: 'x64'
+          - platform: 'windows-latest'
+            arch: 'x64'
 
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies (Ubuntu only)
+      # tag 与产物命名用的版本号是两回事：前者带 v，后者不带。
+      # 这里一次算清楚，避免 release 说明里出现 DTV_v3.0.6_*.dmg 这种点不开的名字。
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          RAW="${{ github.event.inputs.version || github.ref_name }}"
+          if [[ -z "$RAW" || "$RAW" != v* ]]; then
+            echo "::error::版本 tag 必须以 v 开头（当前：$RAW）"
+            exit 1
+          fi
+          echo "tag=${RAW}" >> "$GITHUB_OUTPUT"
+          echo "plain=${RAW#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies (Ubuntu)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf protobuf-compiler pkg-config perl build-essential
 
-      - name: Disable Homebrew auto update (macOS Intel)
-        if: matrix.platform == 'macos-15-intel'
-        run: echo "HOMEBREW_NO_AUTO_UPDATE=1" >> $GITHUB_ENV
-
-      - name: Install dependencies (macOS)
+      # 不用 Homebrew：Intel macOS 已经没有官方 bottle，brew install 会退化成源码
+      # 编译甚至长时间卡住（实测有一次卡在 brew 里 25 分钟没动静）。
+      # protobuf 官方预编译包自带 protoc，两个架构各有独立产物，直接下载即可。
+      - name: Install protoc (macOS)
         if: startsWith(matrix.platform, 'macos-')
+        shell: bash
         run: |
-          brew update
-          brew install protobuf pkg-config nasm
+          set -euo pipefail
+          PROTOC_VERSION=25.3
+          case "$(uname -m)" in
+            arm64)  ASSET="osx-aarch_64" ;;
+            x86_64) ASSET="osx-x86_64" ;;
+            *) echo "::error::未知架构 $(uname -m)"; exit 1 ;;
+          esac
+          URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${ASSET}.zip"
+          echo "downloading $URL"
+          curl -fsSL -o "$RUNNER_TEMP/protoc.zip" "$URL"
+          unzip -o -q "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          sudo cp "$RUNNER_TEMP/protoc/bin/protoc" /usr/local/bin/protoc
+          sudo chmod +x /usr/local/bin/protoc
+          protoc --version
 
-      - name: Install protobuf (Windows)
+      - name: Install protoc (Windows)
         if: matrix.platform == 'windows-latest'
+        shell: pwsh
         run: |
-          choco install protoc
-          echo "C:\ProgramData\chocolatey\lib\protoc\tools" >> $GITHUB_PATH
+          choco install protoc -y
+          echo "C:\ProgramData\chocolatey\lib\protoc\tools" >> $env:GITHUB_PATH
 
+      # openssl-sys 以 vendored 方式编译，Windows 上需要 perl 与 nasm 参与汇编。
       - name: Install OpenSSL build prerequisites (Windows)
         if: matrix.platform == 'windows-latest'
+        shell: pwsh
         run: |
           choco install strawberryperl nasm -y
-          echo "C:\Program Files\NASM" >> $GITHUB_PATH
-          echo "C:\Strawberry\perl\bin" >> $GITHUB_PATH
+          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
+          echo "C:\Strawberry\perl\bin" >> $env:GITHUB_PATH
 
       - name: Set rusty_v8 archive (Windows)
         if: matrix.platform == 'windows-latest'
+        shell: pwsh
         run: |
-          echo "RUSTY_V8_ARCHIVE=https://github.com/denoland/rusty_v8/releases/download/v0.93.1/rusty_v8_release_x86_64-pc-windows-msvc.lib.gz" >> $GITHUB_ENV
-          
+          echo "RUSTY_V8_ARCHIVE=https://github.com/denoland/rusty_v8/releases/download/v0.93.1/rusty_v8_release_x86_64-pc-windows-msvc.lib.gz" >> $env:GITHUB_ENV
+
       - name: Patch tauri config for Windows build
         if: matrix.platform == 'windows-latest'
-        shell: powershell
+        shell: pwsh
         run: |
           $path = "src-tauri/tauri.conf.json"
           $json = Get-Content -Path $path -Raw -Encoding utf8 | ConvertFrom-Json
@@ -87,18 +112,17 @@ jobs:
           $raw = $json | ConvertTo-Json -Depth 100
           [System.IO.File]::WriteAllText($path, $raw, [System.Text.UTF8Encoding]::new($false))
 
+      # 不指定 version，改由 package.json 的 packageManager 字段决定（唯一事实来源）。
+      # 之前写的是 version: latest：pnpm 11 改了构建脚本白名单的字段名和位置后
+      # pnpm install 直接退出 1，所有平台的构建一起挂掉。
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: latest
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
-
-
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -108,13 +132,38 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      # macOS runners ship Apple's ld/clang (LLVM) which can be incompatible with Rust LTO bitcode,
-      # causing errors like: "failed to load bitcode of module ... .rcgu.o".
-      # Disable LTO on macOS to make release builds reliable.
+      # macOS runner 自带 Apple 的 ld/clang，与 Rust LTO bitcode 有兼容问题
+      # （failed to load bitcode of module ... .rcgu.o），关掉 LTO 才能稳定出包。
       - name: Disable Rust LTO (macOS)
         if: startsWith(matrix.platform, 'macos-')
+        run: echo "CARGO_PROFILE_RELEASE_LTO=false" >> $GITHUB_ENV
+
+      # 版本号只写在这里：三个文件由 tag 自动派生，发版不用再手改。
+      - name: Sync app version from tag
+        shell: bash
         run: |
-          echo "CARGO_PROFILE_RELEASE_LTO=false" >> $GITHUB_ENV
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            const bumpJson = (file) => {
+              const src = fs.readFileSync(file, "utf8");
+              const re = /"version"\s*:\s*"[^"]*"/;
+              if (!re.test(src)) throw new Error(`version 字段未在 ${file} 中找到`);
+              fs.writeFileSync(file, src.replace(re, `"version": "${v}"`));
+            };
+            const bumpCargo = (file) => {
+              const src = fs.readFileSync(file, "utf8");
+              const re = /^version = "[^"]*"$/m;
+              if (!re.test(src)) throw new Error(`version 字段未在 ${file} 中找到`);
+              fs.writeFileSync(file, src.replace(re, `version = "${v}"`));
+            };
+            bumpJson("package.json");
+            bumpJson("src-tauri/tauri.conf.json");
+            bumpCargo("src-tauri/Cargo.toml");
+            console.log("app version ->", v);
+          ' '${{ steps.version.outputs.plain }}'
+          grep -h '"version"' package.json src-tauri/tauri.conf.json
 
       - name: Install frontend dependencies
         run: pnpm install
@@ -127,38 +176,23 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           RUSTY_V8_MIRROR: https://github.com/denoland/rusty_v8/releases/download
         with:
-          tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: 'DTV ${{ github.event.inputs.version || github.ref_name }}'
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: 'DTV ${{ steps.version.outputs.tag }}'
           releaseBody: |
-            ## 🎉 DTV Release ${{ github.event.inputs.version || github.ref_name }}
-            
+            ## 🎉 DTV ${{ steps.version.outputs.tag }}
+
             ### 📦 安装包下载
-            - **macOS (Apple Silicon)**: DTV_${{ github.event.inputs.version || github.ref_name }}_aarch64.dmg
-            - **macOS (Intel)**: DTV_${{ github.event.inputs.version || github.ref_name }}_x64.dmg
-            - **Windows**: DTV_${{ github.event.inputs.version || github.ref_name }}_x64-setup.exe
-            - **Linux (AppImage)**: DTV_${{ github.event.inputs.version || github.ref_name }}_amd64.AppImage
-            - **Linux (Deb)**: DTV_${{ github.event.inputs.version || github.ref_name }}_amd64.deb
-            
+            - **Windows**: [exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/DTV_${{ steps.version.outputs.plain }}_x64-setup.exe) | [msi](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/DTV_${{ steps.version.outputs.plain }}_x64_zh-CN.msi)
+            - **macOS (Apple Silicon)**: [dmg](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/DTV_${{ steps.version.outputs.plain }}_aarch64.dmg)
+            - **macOS (Intel)**: [dmg](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/DTV_${{ steps.version.outputs.plain }}_x64.dmg)
+            - **Linux**: [deb](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/DTV_${{ steps.version.outputs.plain }}_amd64.deb) | [AppImage](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/DTV_${{ steps.version.outputs.plain }}_amd64.AppImage)
+
             ### 🔧 安装说明
-            - **macOS**: 下载对应架构的 .dmg 文件，双击安装
-            - **Windows**: 下载 .exe 文件，右键以管理员身份运行
-            - **Linux**: 下载 .AppImage 文件并添加执行权限，或安装 .deb 包
-            
+            - **macOS**: 下载对应架构的 .dmg，双击安装
+            - **Windows**: 下载 .exe 或 .msi 安装；约 10% 的抖音直播流为 HEVC，需要另装 Microsoft.HEVCVideoExtension 才能播放
+            - **Linux**: AppImage 需自行添加执行权限，或安装 deb 包
+
             ### ⚠️ 注意事项
-            - 首次运行可能需要在系统设置中允许应用运行
-            - macOS 用户可能需要在「系统偏好设置 > 安全性与隐私」中允许应用
+            - macOS 若提示「包已损坏」，执行 `sudo xattr -rd com.apple.quarantine /Applications/DTV.app`
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
-
-  # 创建统一的 Release（仅在所有平台构建完成后运行）
-  create-release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Create Release Summary
-        run: |
-          echo "✅ 所有平台构建完成！"
-          echo "📦 发布版本: ${{ github.event.inputs.version || github.ref_name }}"
-          echo "🎯 支持平台: macOS (Intel + ARM), Windows, Linux"
