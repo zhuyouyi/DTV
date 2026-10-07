@@ -881,7 +881,11 @@ export function MainPlayer({
         playerOptions.flv = {
           isLive: true,
           cors: true,
-          autoCleanupSourceBuffer: true,
+          // 关掉自动清理 SourceBuffer：该选项在 mpegts.js/xgplayer-flv 里被标注为
+          // 不稳定（默认关闭），它会定期驱逐已缓冲区间，Chromium 能容忍，
+          // 但 WebKit（macOS 客户端）会让 media element 直接进入 error 状态，
+          // 播放器面板上表现为「解码错误 / 请试试刷新」。
+          autoCleanupSourceBuffer: false,
           enableWorker: true,
           stashInitialSize: 128,
           lazyLoad: true,
