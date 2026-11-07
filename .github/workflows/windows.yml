@@ -49,7 +49,17 @@ jobs:
           echo "$(go env GOPATH)\bin" >> $env:GITHUB_PATH
 
       - name: Install NSIS
-        run: choco install nsis -y --no-progress
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          # choco 装完不会把 makensis 加进 PATH，需要自己补。
+          foreach ($p in @("C:\Program Files (x86)\NSIS", "C:\Program Files\NSIS")) {
+            if (Test-Path "$p\makensis.exe") {
+              echo $p >> $env:GITHUB_PATH
+              Write-Host "NSIS at $p"
+            }
+          }
+          Get-Command makensis -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
 
       - name: Install frontend deps
         working-directory: frontend
