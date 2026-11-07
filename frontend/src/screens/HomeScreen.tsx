@@ -264,6 +264,13 @@ export function HomeScreen({ platform }: HomeScreenProps) {
     <div className={styles.root}>
       <h1 className="visually-hidden">{PLATFORM_LABEL[platform]}直播 · 热门直播</h1>
 
+      {/* 参考 tvbox-silicon 的内容区结构：小号分类标签 + 大标题，
+          下面才是分区胶囊和网格，让页面有明确的阅读起点。 */}
+      <header className={styles.pageHeader}>
+        <p className={styles.pageKicker}>{PLATFORM_LABEL[platform]}</p>
+        <h2 className={styles.pageTitle}>热门直播</h2>
+      </header>
+
       {showCategoryLoading ? (
         <div className={styles.categoriesLoading}>
           <Spinner size={13} />

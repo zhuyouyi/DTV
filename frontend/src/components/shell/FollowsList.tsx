@@ -589,6 +589,7 @@ export function FollowsList({
           <>
             <div className={styles.headerLeft}>
               <Users size={18} strokeWidth={2.2} className={styles.headerIcon} />
+              <span className={styles.headerLabel}>关注</span>
             </div>
             <div className={styles.headerActions}>
               {refreshButton}

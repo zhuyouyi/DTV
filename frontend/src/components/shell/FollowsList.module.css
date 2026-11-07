@@ -67,6 +67,15 @@
   flex: 0 0 auto;
 }
 
+/* 参考 tvbox-silicon 的分组标签：小号、字距拉开、低对比 */
+.headerLabel {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
 .headerActions {
   display: flex;
   align-items: center;

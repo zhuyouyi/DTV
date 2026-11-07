@@ -1,8 +1,8 @@
 .grid {
   display: grid;
   /* 按可用宽度自动铺满：侧栏折叠/展开后不留右侧空隙 */
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px;
   width: 100%;
 }
 

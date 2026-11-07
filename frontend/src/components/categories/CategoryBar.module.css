@@ -9,14 +9,15 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px 14px;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  margin-bottom: 14px;
+  gap: 8px;
+  /* 参考 tvbox-silicon：分区栏不用面板包起来，直接浮在页面底色上，
+     视觉重心留给海报网格。 */
+  padding: 0 2px 2px;
+  border: none;
+  background: transparent;
+  margin-bottom: 16px;
   flex: 0 0 auto;
-  box-shadow: var(--shadow-low);
+  box-shadow: none;
 }
 
 /* ------------------------------------------------------------ 一级分区 */
@@ -47,9 +48,9 @@
 
 .groupTab {
   position: relative;
-  height: 34px;
+  height: 32px;
   padding: 0 14px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   font-size: 14px;
   font-weight: var(--weight-medium);
   color: var(--text-secondary);
@@ -67,9 +68,9 @@
 
 .groupTabActive,
 .groupTabActive:hover {
-  color: var(--accent-ink);
+  color: var(--accent-text);
   font-weight: var(--weight-semibold);
-  background: var(--accent-soft);
+  background: var(--accent);
 }
 
 /* ------------------------------------------------------------ 二级分区 */

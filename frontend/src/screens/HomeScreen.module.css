@@ -5,6 +5,32 @@
   min-height: 0;
 }
 
+.pageHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 2px 14px;
+  flex: 0 0 auto;
+}
+
+.pageKicker {
+  margin: 0;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.14em;
+  color: var(--text-tertiary);
+}
+
+.pageTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1.18;
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
 .categoriesLoading {
   display: flex;
   align-items: center;
