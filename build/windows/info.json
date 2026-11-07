@@ -1,0 +1,16 @@
+{
+	"fixed": {
+		"file_version": "4.0.0",
+		"product_version": "4.0.0"
+	},
+	"info": {
+		"0409": {
+			"ProductVersion": "4.0.0",
+			"CompanyName": "DTV",
+			"FileDescription": "DTV - 直播聚合客户端",
+			"LegalCopyright": "(c) 2026, DTV",
+			"ProductName": "DTV",
+			"Comments": "https://github.com/c-zeong/DTV"
+		}
+	}
+}

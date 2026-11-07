@@ -1,0 +1,84 @@
+name: Windows Installer
+
+# Windows 安装包流水线。
+#
+# 触发方式：
+#   - Actions 页面手动 Run workflow
+#   - push 形如 v4.0.1 的 tag（同时挂到 GitHub Release）
+#
+# 产物：DTV-<version>-x64-setup.exe（NSIS，按用户安装，不触发 UAC）
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: go.sum
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Wails3 CLI
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          echo "$(go env GOPATH)\bin" >> $env:GITHUB_PATH
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # SIGN_ENABLED=false：没有代码签名证书时产出未签名安装包，
+      # 安装与运行都不受影响（SmartScreen 会提示"未知发布者"）。
+      - name: Build app and NSIS installer
+        run: wails3 task windows:create:nsis:installer SIGN_ENABLED=false
+
+      - name: Collect artifact
+        shell: pwsh
+        run: |
+          $match = Select-String -Path build/config.yml -Pattern 'version:\s*"([^"]+)"' | Select-Object -First 1
+          $version = $match.Matches[0].Groups[1].Value
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item "bin/dtv-amd64-installer.exe" "artifacts/DTV-$version-x64-setup.exe"
+          Get-ChildItem artifacts
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: DTV-windows-x64-installer
+          path: artifacts/*.exe
+          if-no-files-found: error
+
+      - name: Attach installer to tagged release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.exe
+          generate_release_notes: true
